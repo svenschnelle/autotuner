@@ -46,85 +46,26 @@
 
 #include <main.h>
 
-void do_t2relais(int relais, int coilnr, int onoff);
-
-int relstat_ON[RELAISANZAHL];
-int relstat_OFF[RELAISANZAHL];
-uint8_t relpos[RELAISANZAHL];
-
-GPIO_TypeDef *rel_gpios[RELAISANZAHL] =
-{
-	GPIOC,
-	GPIOC,
-
-	GPIOE,
-	GPIOE,
-	GPIOE,
-	GPIOE,
-	GPIOE,
-	GPIOE,
-	GPIOE,
-	GPIOC,
-
-	GPIOD,
-	GPIOD,
-	GPIOD,
-	GPIOD,
-	GPIOD,
-	GPIOD,
-	GPIOE,
-	GPIOD,
-	GPIOD,
-};
-
-int relON_ports[RELAISANZAHL] =
-{
-	1<<5,
-	1<<4,
-
-	1<<1,
-	1<<3,
-	1<<5,
-	1<<7,
-	1<<9,
-	1<<11,
-	1<<15,
-	1<<0,
-
-	1<<15,
-	1<<1,
-	1<<3,
-	1<<5,
-	1<<7,
-	1<<9,
-	1<<13,
-	1<<11,
-	1<<13,
-};
-
-int relOFF_ports[RELAISANZAHL] =
-{
-	1<<7,
-	1<<6,
-
-	1<<0,
-	1<<2,
-	1<<4,
-	1<<6,
-	1<<8,
-	1<<10,
-	1<<14,
-	1<<2,
-
-	1<<14,
-	1<<0,
-	1<<2,
-	1<<4,
-	1<<6,
-	1<<8,
-	1<<12,
-	1<<10,
-	1<<12,
+struct relay relays[RELAISANZAHL] = {
+	[L_TRX]  = { .gpio = GPIOC, .on = 5,  .off = 7  },
+	[L_ANT]  = { .gpio = GPIOC, .on = 4,  .off = 6  },
+	[C25]    = { .gpio = GPIOE, .on = 1,  .off = 0  },
+	[C50]    = { .gpio = GPIOE, .on = 3,  .off = 2  },
+	[C100]   = { .gpio = GPIOE, .on = 5,  .off = 4  },
+	[C200]   = { .gpio = GPIOE, .on = 7,  .off = 6  },
+	[C400]   = { .gpio = GPIOE, .on = 9,  .off = 8  },
+	[C800]   = { .gpio = GPIOE, .on = 11, .off = 10 },
+	[C1600]  = { .gpio = GPIOE, .on = 15, .off = 14 },
+	[C3200]  = { .gpio = GPIOC, .on = 0,  .off = 2  },
+	[L50]    = { .gpio = GPIOD, .on = 15, .off = 14 },
+	[L100]   = { .gpio = GPIOD, .on = 1,  .off = 0  },
+	[L200]   = { .gpio = GPIOD, .on = 3,  .off = 2  },
+	[L400]   = { .gpio = GPIOD, .on = 5,  .off = 4  },
+	[L800]   = { .gpio = GPIOD, .on = 7,  .off = 6  },
+	[L1600]  = { .gpio = GPIOD, .on = 9,  .off = 8  },
+	[L3200]  = { .gpio = GPIOE, .on = 13, .off = 12 },
+	[L6400]  = { .gpio = GPIOD, .on = 11, .off = 10 },
+	[L12800] = { .gpio = GPIOD, .on = 13, .off = 12 },
 };
 
 void init_t2relais()
@@ -153,65 +94,78 @@ void init_t2relais()
 	GPIO_ResetBits(GPIOE, 0xFFFF);
 	GPIO_ResetBits(GPIOC, 0x7FFF);
 
-	for(int i=0; i<RELAISANZAHL; i++)
-		relpos[i] = 255;
+	for(int i=0; i < RELAISANZAHL; i++)
+		relays[i].state = 255;
 }
 
 // diese Funktion ruft man auf um ein Relais zu schalten
-void switch_t2relais(int relais, int onoff)
+void switch_t2relais(int num, int onoff)
 {
-	if(relais >= RELAISANZAHL) return;
+	if(num >= RELAISANZAHL)
+		return;
+
+	struct relay *r = relays + num;
 
 	if(onoff == TOGGLE)
-	{
-		if(relpos[relais] == 1) onoff = 0;
-		if(relpos[relais] == 0) onoff = 1;
-	}
+		onoff = r->state ? 0 : 1;
 
-	if(onoff)
-	{
-		if(relpos[relais] != 1)
-		{
-			relstat_ON[relais] = RELHOLDTIME;
-			relpos[relais] = 1;
+	if(onoff) {
+		if(r->state != 1) {
+			r->timer_on = RELHOLDTIME;
+			r->state = 1;
 		}
-	}
-	else
-	{
-		if(relpos[relais] != 0)
-		{
-			relstat_OFF[relais] = RELHOLDTIME;
-			relpos[relais] = 0;
+	} else {
+		if(r->state != 0) {
+			r->timer_off = RELHOLDTIME;
+			r->state = 0;
 		}
 	}
 }
 
+
+// aktiviere/deaktiviere die Relaisspulen
+static void do_t2relais(int num, int coilnr, int onoff)
+{
+	struct relay *r = relays + num;
+
+	if(onoff == ON) {
+		if(coilnr == ON)
+			GPIO_SetBits(r->gpio, 1 << r->on);
+		else
+			GPIO_SetBits(r->gpio, 1 << r->off);
+	} else {
+		if(coilnr == ON)
+			GPIO_ResetBits(r->gpio, 1 << r->on);
+		else
+			GPIO_ResetBits(r->gpio, 1 << r->off);
+	}
+}
+
+
 // wird NUR aus dem Timer aufgerufen, alle 1ms
 // Startet und beendet einen Relaisimpuls
-void reset_t2relais()
+void reset_t2relais(void)
 {
-	for(int i=0; i<RELAISANZAHL; i++)
-	{
-		if(relstat_ON[i])
-		{
-			if(relstat_ON[i] == RELHOLDTIME)
-				do_t2relais(i,ON,ON);		// Beginne einen Relaisimpulse
+	for(int i = 0; i < RELAISANZAHL; i++) {
+		struct relay *r = relays + i;
+		if(r->timer_on) {
+			if(r->timer_on == RELHOLDTIME)
+				do_t2relais(i, ON, ON);		// Beginne einen Relaisimpulse
 
-			if(relstat_ON[i] == 1)
-				do_t2relais(i,ON,OFF);	// Zeit abgelaufen, beende Relaisimpulse
+			if(r->timer_on == 1)
+				do_t2relais(i, ON, OFF);	// Zeit abgelaufen, beende Relaisimpulse
 
-			relstat_ON[i]--;
+			r->timer_on--;
 		}
 
-		if(relstat_OFF[i])
-		{
-			if(relstat_OFF[i] == RELHOLDTIME)
-				do_t2relais(i,OFF,ON);		// Beginne einen Relaisimpulse
+		if(r->timer_off) {
+			if(r->timer_off == RELHOLDTIME)
+				do_t2relais(i, OFF, ON);	// Beginne einen Relaisimpulse
 
-			if(relstat_OFF[i] == 1)
-				do_t2relais(i,OFF,OFF);	// Zeit abgelaufen, beende Relaisimpulse
+			if(r->timer_off == 1)
+				do_t2relais(i, OFF, OFF);	// Zeit abgelaufen, beende Relaisimpulse
 
-			relstat_OFF[i]--;
+			r->timer_off--;
 		}
 	}
 }
@@ -219,34 +173,11 @@ void reset_t2relais()
 // 1 wenn irgendein Relais gerade geschaltet wird
 int isRelaisActive()
 {
-	for(int i=0; i<RELAISANZAHL; i++)
-	{
-		if(relstat_ON[i])
-			return 1;
-
-		if(relstat_OFF[i])
+	for(int i = 0; i < RELAISANZAHL; i++) {
+		struct relay *r = relays + i;
+		if(r->timer_on || r->timer_off)
 			return 1;
 	}
 
 	return 0;
 }
-
-// aktiviere/deaktiviere die Relaisspulen
-void do_t2relais(int relais, int coilnr, int onoff)
-{
-	if(onoff == ON)
-	{
-		if(coilnr == ON)
-			GPIO_SetBits(rel_gpios[relais], relON_ports[relais]);
-		else
-			GPIO_SetBits(rel_gpios[relais], relOFF_ports[relais]);
-	}
-	else
-	{
-		if(coilnr == ON)
-			GPIO_ResetBits(rel_gpios[relais], relON_ports[relais]);
-		else
-			GPIO_ResetBits(rel_gpios[relais], relOFF_ports[relais]);
-	}
-}
-

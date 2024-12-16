@@ -1,8 +1,8 @@
 all: tune.elf
 
 INCS=-Iinc -ICMSIS/device/ -ICMSIS/core -IStdPeriph_Driver/inc -include StdPeriph_Driver/inc/stm32f4xx_conf.h
-CFLAGS=-O2 -Wall -Wextra -DSTM32F427_437xx=1 -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 -u _printf_float -MMD -MP
-LDFLAGS=-Wl,-T"LinkerScript.ld" -Wl,-Map="output.map" -Wl,--gc-sections -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 -u _printf_float
+CFLAGS=-O3 -std=c17 -Wall -Wextra -DSTM32F427_437xx=1 -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16 -u _printf_float -MMD -MP -g -DWITH_LCD -DSEMIHOSTING
+LDFLAGS=-Wl,-T"LinkerScript.ld" -Wl,-Map="output.map" -Wl,--gc-sections -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16 -u _printf_float -g --specs=rdimon.specs -lrdimon
 CROSS_COMPILE=arm-none-eabi-
 CC=$(CROSS_COMPILE)gcc
 AS=$(CROSS_COMPILE)as
@@ -19,6 +19,8 @@ SRCS=src/adc.c					\
 	src/bandcalc.c				\
 	src/crc16.c				\
 	src/eeprom.c				\
+	src/lcd.c				\
+	src/i2c.c				\
 	src/main.c				\
 	src/ntc.c				\
 	src/remote.c				\
@@ -26,7 +28,6 @@ SRCS=src/adc.c					\
 	src/setC.c				\
 	src/setL.c				\
 	src/swr.c				\
-	src/syscalls.c				\
 	src/system_stm32f4xx.c			\
 	src/t2_led.c				\
 	src/tick1ms.c				\

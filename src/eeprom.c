@@ -15,267 +15,14 @@
  */
 
 #include <main.h>
-
-enum _I2C_MODE_
-{
-	I2C_TX = 0,
-	I2C_RX,
-	I2C_RX_SENDADR
-};
-
-volatile uint8_t i2c_txdata[MAXI2CTXDATA];
-volatile uint8_t i2c_rxdata[MAXI2CTXDATA];
-
-volatile uint16_t deviceAddress = EEPROMADR;
-volatile int i2c_TXByteCounter;
-volatile int i2c_RXByteCounter;
-volatile uint8_t i2c_mode;
-
-volatile uint8_t i2cBusyFlag;
+#include <i2c.h>
 
 void init_eeprom()
 {
-	// I2C-3 Clock
-	RCC_APB1PeriphClockCmd(RCC_APB1Periph_I2C3, ENABLE);
-	// Schalte den Takt für GPIOA und C ein
-	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA, ENABLE);
-	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
-
-	// WP (PC8): Schalte auf Output
-	GPIO_InitTypeDef GPIO_InitStructure;
-	GPIO_InitStructure.GPIO_Pin=GPIO_Pin_8;
-	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;
-	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_100MHz;
-	GPIO_InitStructure.GPIO_OType = GPIO_OType_PP;
-	GPIO_InitStructure.GPIO_PuPd  = GPIO_PuPd_UP;
-	GPIO_Init(GPIOC, &GPIO_InitStructure);
-
-	GPIO_ResetBits(GPIOC, GPIO_Pin_8);
-
-	// define alternate Function SCL, SDA
-	GPIO_PinAFConfig(GPIOA, GPIO_PinSource8, GPIO_AF_I2C3);
-	GPIO_PinAFConfig(GPIOC, GPIO_PinSource9, GPIO_AF_I2C3);
-
-	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
-	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
-	GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_NOPULL;
-	GPIO_InitStructure.GPIO_OType = GPIO_OType_OD;
-
-	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_8;
-	GPIO_Init(GPIOA, &GPIO_InitStructure);
-
-	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_9;
-	GPIO_Init(GPIOC, &GPIO_InitStructure);
-
-	// Init NVIC
-	NVIC_InitTypeDef   NVIC_InitStructure;
-	NVIC_InitStructure.NVIC_IRQChannel = I2C3_EV_IRQn;
-	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 1;
-	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
-	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
-	NVIC_Init(&NVIC_InitStructure);
-
-	NVIC_InitStructure.NVIC_IRQChannel = I2C3_ER_IRQn;
-	NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 1;
-	NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
-	NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
-	NVIC_Init(&NVIC_InitStructure);
-
-	// I2C Config
-	I2C_DeInit(I2C3);
-
-	I2C_InitTypeDef i2ctd;
-	i2ctd.I2C_ClockSpeed = 400000;
-	i2ctd.I2C_Mode = I2C_Mode_I2C;
-	i2ctd.I2C_DutyCycle = I2C_DutyCycle_2;
-	i2ctd.I2C_OwnAddress1 = 0;
-	i2ctd.I2C_Ack = I2C_Ack_Enable;
-	i2ctd.I2C_AcknowledgedAddress = I2C_AcknowledgedAddress_7bit;
-	I2C_Init(I2C3, &i2ctd);
-
-	I2C_ITConfig(I2C3, I2C_IT_EVT, ENABLE);
-	I2C_ITConfig(I2C3, I2C_IT_BUF, ENABLE);
-	I2C_ITConfig(I2C3, I2C_IT_ERR, ENABLE);
-
-	i2cBusyFlag = 0;
-	I2C_Cmd(I2C3, ENABLE);
-
 	copyEeToMem();
 }
 
-void I2C3_EV_IRQHandler(void)
-{
-static int idx;
-
-	if(I2C_GetFlagStatus(I2C3, I2C_FLAG_SB) == SET)
-	{
-		// START wurde erzeugt, sende jetzt die Device-Adresse
-		if(i2c_mode == I2C_TX || i2c_mode == I2C_RX_SENDADR)
-		{
-			// STM32 Transmitter
-			I2C_Send7bitAddress(I2C3, deviceAddress, I2C_Direction_Transmitter);
-		}
-		else
-		{
-			// STM32 Receiver
-			I2C_Send7bitAddress(I2C3, deviceAddress, I2C_Direction_Receiver);
-		}
-		idx = 0;
-	}
-	else if(I2C_GetFlagStatus(I2C3, I2C_FLAG_ADDR) == SET || I2C_GetFlagStatus(I2C3, I2C_FLAG_BTF) == SET)
-	{
-		// Device Adresse wurde gesendet und vom Slave bestätigt
-		I2C_ReadRegister(I2C3, I2C_Register_SR1);
-		I2C_ReadRegister(I2C3, I2C_Register_SR2);
-		if(i2c_mode == I2C_TX)
-		{
-			// stm -> device
-			if(i2c_TXByteCounter == 0)
-			{
-				if(i2cBusyFlag == 0)
-				{
-					I2C3->SR1 = 0;
-					I2C3->SR2 = 0;
-					return;
-				}
-				I2C_GenerateSTOP(I2C3, ENABLE);
-				I2C3->SR1 = 0;
-				I2C3->SR2 = 0;
-				i2cBusyFlag = 0;
-			}
-			else
-			{
-				I2C_SendData(I2C3, i2c_txdata[idx++]);
-				i2c_TXByteCounter--;
-			}
-		}
-		if(i2c_mode == I2C_RX_SENDADR)
-		{
-			// stm -> device, send eeprom Address
-			if(i2c_TXByteCounter == 0)
-			{
-				I2C_GenerateSTART(I2C3, ENABLE);
-				i2c_mode = I2C_RX;
-				idx = 0;
-			}
-			else
-			{
-				I2C_SendData(I2C3, i2c_txdata[idx++]);
-				i2c_TXByteCounter--;
-			}
-		}
-	}
-	else if(I2C_GetFlagStatus(I2C3, I2C_FLAG_RXNE) == SET)
-	{
-		// STM32 Receiver
-		I2C_ReadRegister(I2C3, I2C_Register_SR1);
-		I2C_ReadRegister(I2C3, I2C_Register_SR2);
-		i2c_RXByteCounter--;
-		if(i2c_RXByteCounter == 0)
-		{
-			I2C_AcknowledgeConfig(I2C3, DISABLE);
-			I2C_GenerateSTOP(I2C3, ENABLE);
-			i2c_rxdata[idx++] = I2C_ReceiveData(I2C3);
-			i2cBusyFlag = 0;
-		}
-		else
-		{
-			i2c_rxdata[idx++] = I2C_ReceiveData(I2C3);
-		}
-	}
-	else
-	{
-		I2C3->SR1 = 0;
-		I2C3->SR2 = 0;
-	}
-}
-
-void I2C3_ER_IRQHandler(void)
-{
-	I2C_GenerateSTOP(I2C3, ENABLE);
-	i2cBusyFlag = 0;
-
-	I2C_ClearFlag(I2C3, I2C_FLAG_AF);
-	I2C_ClearFlag(I2C3, I2C_FLAG_ARLO);
-	I2C_ClearFlag(I2C3, I2C_FLAG_BERR);
-}
-
-void i2c_sendbyte(uint16_t adr, uint8_t data)
-{
-	while(i2cBusyFlag);
-	while(I2C_GetFlagStatus(I2C3,I2C_FLAG_BUSY));
-
-	i2c_txdata[0] = adr>>8;
-	i2c_txdata[1] = adr;
-	i2c_txdata[2] = data;
-	i2c_TXByteCounter = 3;
-	i2c_mode = I2C_TX;
-
-	i2cBusyFlag = 1;
-	I2C_GenerateSTART(I2C3, ENABLE);
-	while(i2cBusyFlag);
-	delay_1ms(10);	// das EEPROM braucht min 5ms um seine Zellen zu schreiben
-}
-
 // sende eine 64 Byte Page
-void i2c_sendpage64(uint16_t adr, uint8_t* pdata)
-{
-	while(i2cBusyFlag);
-	while(I2C_GetFlagStatus(I2C3,I2C_FLAG_BUSY));
-
-	i2c_txdata[0] = adr>>8;
-	i2c_txdata[1] = adr;
-	for(int i=0; i<64; i++)
-		i2c_txdata[2+i] = *pdata++;
-	i2c_TXByteCounter = 64+2;
-	i2c_mode = I2C_TX;
-
-	i2cBusyFlag = 1;
-	I2C_GenerateSTART(I2C3, ENABLE);
-	while(i2cBusyFlag);
-	delay_1ms(10);	// das EEPROM braucht min 5ms um seine Zellen zu schreiben
-}
-
-uint8_t i2c_readbyte(uint16_t adr)
-{
-	while(i2cBusyFlag);
-	while(I2C_GetFlagStatus(I2C3,I2C_FLAG_BUSY));
-
-	i2c_txdata[0] = adr>>8;
-	i2c_txdata[1] = adr;
-	i2c_TXByteCounter = 2;
-	i2c_mode = I2C_RX_SENDADR;
-
-	i2c_RXByteCounter = 1;
-
-	i2cBusyFlag = 1;
-	I2C_AcknowledgeConfig(I2C3, ENABLE);
-	I2C_GenerateSTART(I2C3, ENABLE);
-	while(i2cBusyFlag);
-
-	return i2c_rxdata[0];
-}
-
-void i2c_readpage64(uint16_t adr, uint8_t* pdata)
-{
-	while(i2cBusyFlag);
-	while(I2C_GetFlagStatus(I2C3,I2C_FLAG_BUSY));
-
-	i2c_txdata[0] = adr>>8;
-	i2c_txdata[1] = adr;
-	i2c_TXByteCounter = 2;
-	i2c_mode = I2C_RX_SENDADR;
-
-	i2c_RXByteCounter = 64;
-
-	i2cBusyFlag = 1;
-	I2C_AcknowledgeConfig(I2C3, ENABLE);
-	I2C_GenerateSTART(I2C3, ENABLE);
-	while(i2cBusyFlag);
-
-	for(int i=0; i<64; i++)
-		pdata[i] = i2c_rxdata[i];
-}
 
 // ============= EEPROM Funktionen ===================
 
@@ -285,7 +32,7 @@ void i2c_readpage64(uint16_t adr, uint8_t* pdata)
  */
 
 // markiert eine Modifikation der Page damit diese gespeichert wird
-uint8_t page_modified[PAGES];
+static uint8_t page_modified[PAGES];
 
 // Speicherabbild des eeproms
 uint8_t ee_mem[EESIZE];
@@ -293,16 +40,13 @@ uint8_t ee_mem[EESIZE];
 // Konfiguration für Page 0
 CONFIG eeconfig;
 
-
 // schreibt geänderte Pages ins EEPROM
 void copyMemToEE()
 {
-	for(int page = 0; page < PAGES; page++)
-	{
-		if(page_modified[page])
-		{
+	for(int page = 0; page < PAGES; page++)	{
+		if(page_modified[page])	{
 			page_modified[page] = 0;
-			i2c_sendpage64(page*PAGESIZE, ee_mem+page*PAGESIZE);
+			i2c_sendpage64(EEPROMADR, page*PAGESIZE, ee_mem+page*PAGESIZE);
 		}
 	}
 }
@@ -310,28 +54,28 @@ void copyMemToEE()
 // kopiert die Config ins eemem
 void configToEEmem()
 {
-uint8_t *p = (uint8_t *)(&eeconfig);
+	uint8_t *p = (uint8_t *)(&eeconfig);
 
 	uint16_t crc16 = crc16_messagecalc(p, sizeof(CONFIG));
 
 	int idx = 0;
-	for(int i=0; i<sizeof(CONFIG); i++)
+	for(unsigned int i = 0; i<sizeof(CONFIG); i++)
 		ee_mem[idx++] = p[i];
 
 	ee_mem[idx++] = crc16 >> 8;
 	ee_mem[idx] = crc16;
 
-	for(int i=0; i<=(sizeof(CONFIG) / 64); i++)
+	for(unsigned int i = 0; i<=(sizeof(CONFIG) / 64); i++)
 		page_modified[i] = 1;
 }
 
 void EEmemToConfig()
 {
-uint16_t crc16;
-uint8_t *p = (uint8_t *)(&eeconfig);
+	uint16_t crc16;
+	uint8_t *p = (uint8_t *)(&eeconfig);
 
 	int idx = 0;
-	for(int i=0; i<sizeof(CONFIG); i++)
+	for(unsigned int i=0; i < sizeof(CONFIG); i++)
 		p[i] = ee_mem[idx++];
 
 	crc16 = ee_mem[idx++];
@@ -353,10 +97,10 @@ uint8_t *p = (uint8_t *)(&eeconfig);
 // checksumme der Config
 int calcConfigSum()
 {
-uint8_t *p = (uint8_t *)(&eeconfig);
-int sum = 0;
+	uint8_t *p = (uint8_t *)(&eeconfig);
+	int sum = 0;
 
-	for(int i=0; i<sizeof(CONFIG); i++)
+	for(unsigned int i=0; i < sizeof(CONFIG); i++)
 		sum += p[i];
 
 	return sum;
@@ -365,8 +109,8 @@ int sum = 0;
 // überwache die Config, wenn geändert, schreibe sie ins eeprom
 void checkConfig()
 {
-static int first = 1;
-static int cfgsum;
+	static int first = 1;
+	static int cfgsum;
 
 	if(first)
 	{
@@ -387,9 +131,8 @@ static int cfgsum;
 // liest das gesamte eeprom in den Speicher (einmal nach dem Einschalten)
 void copyEeToMem()
 {
-	for(int page = 0; page < PAGES; page++)
-	{
-		i2c_readpage64(page*PAGESIZE, ee_mem+page*PAGESIZE);
+	for(int page = 0; page < PAGES; page++) {
+		i2c_readpage64(EEPROMADR, page * PAGESIZE, ee_mem + page * PAGESIZE);
 		page_modified[page] = 0;
 	}
 
@@ -437,9 +180,12 @@ void copyEeToMem()
 // speichert einen Tuningwert ins EEPROM-Memory
 void saveTuningValue()
 {
+	uint32_t civ_freq = getCIVfreq();
+
 	tuningsource = 0;
 
-	if(civ_freq == 0) return;
+	if(civ_freq == 0)
+		return;
 
 	TUNINGVAL tv = makeEEdataset();
 	uint16_t adr = memadr(civ_freq,antenne);
@@ -448,7 +194,7 @@ void saveTuningValue()
 	ee_mem[adr+1] = tv.LC2;
 	ee_mem[adr+2] = tv.LC3;
 
-	printinfo("save %d: %d C%02X L%02X",adr,civ_freq/1000,store_actC(),store_actL());
+	printinfo("save %d: %d C%02X L%02X\n", adr, civ_freq / 1000, store_actC(), store_actL());
 
 	page_modified[adr/PAGESIZE] = 1;
 	page_modified[(adr+1)/PAGESIZE] = 1;	// falls es zur nächsten Page weitergeht
@@ -483,7 +229,10 @@ void clearFullEEprom()
 // lösche alle Werte des aktuellen Bandes
 void clearBandEEprom()
 {
-	if(civ_freq == 0) return;
+	uint32_t civ_freq = getCIVfreq();
+
+	if(civ_freq == 0)
+		return;
 
 	uint32_t startfreq, stopfreq;
 	getFreqEdges(civ_freq , &startfreq, &stopfreq);
@@ -500,7 +249,10 @@ uint32_t tunedToFreq = 0;	// Frequenz für die ein Tuning gefunden wurde
 
 TUNINGVAL *readTuningValue()
 {
-	if(civ_freq == 0) return NULL;
+	uint32_t civ_freq = getCIVfreq();
+
+	if(civ_freq == 0)
+		return NULL;
 
 	uint32_t civ_startfreq = (civ_freq / 10000) * 10000;	// entferne Kommastellen unterhalb 10kHz
 	tuningsource = 1;

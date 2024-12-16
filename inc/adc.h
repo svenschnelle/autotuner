@@ -9,9 +9,7 @@
 #define ADC_H_
 
 void t2_ADC_Init();
-int ui16_Read_ADC1_ConvertedValue(int channel);
 int scan_analog_inputs();
-int isAdcConvReady();
 int getRev();
 int cf_calc_temp(unsigned long uin);
 

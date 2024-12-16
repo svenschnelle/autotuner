@@ -10,12 +10,13 @@
 
 void TIM3_IRQHandler(void);
 void TIM3_Initialization();
-void delay_1ms(int ms);
+void delay_1ms(unsigned int ms);
 
 #define TIME_UNTIL_SLEEP	2000	// ms after last activity
 
 extern volatile unsigned int civsendtick, sleep_request;
 extern volatile unsigned int ee_savetimer;
+extern volatile unsigned int lcd_timer;
 extern volatile unsigned int txqrg_tick;
 extern volatile uint64_t tick_1ms;
 extern volatile unsigned int uart_tick;

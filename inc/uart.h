@@ -14,8 +14,4 @@ int remote_send(uint8_t *pdata, int len);
 void cat_setqrg(uint8_t *p);
 int remote_tx_ready();
 
-#define MAXREMOTEDATA 200	// max. Länge eines Remote Datenpakets
-
-extern uint8_t uart_TX_data[MAXREMOTEDATA];
-
 #endif /* UART_H_ */

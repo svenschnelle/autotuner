@@ -126,8 +126,10 @@ TUNINGVAL makeEEdataset()
 	tunval.LC2 |= (C & 0x1f) << 3;
 	tunval.LC3 = (C >> 5) & 0x3f;
 
-	if(relpos[L_TRX]) tunval.LC3 |= 0x40;
-	if(relpos[L_ANT]) tunval.LC3 |= 0x80;
+	if(relays[L_TRX].state)
+		tunval.LC3 |= 0x40;
+	if(relays[L_ANT].state)
+		tunval.LC3 |= 0x80;
 
 	return tunval;
 }

@@ -12,6 +12,7 @@
 volatile unsigned int tim3_cpt = 0;
 volatile unsigned int civsendtick = 0;
 volatile unsigned int ee_savetimer = 0;
+volatile unsigned int lcd_timer = 0;
 volatile unsigned int tunertimer = 0;
 volatile unsigned int txqrg_tick = 0;
 volatile unsigned int uart_tick = 0;
@@ -54,15 +55,20 @@ void TIM3_IRQHandler(void)
 	{
 		reset_t2relais();
 
-		if(civsendtick) civsendtick--;
-		if(ee_savetimer) ee_savetimer--;
-		if(uart_tick) uart_tick--;
+		if(civsendtick)
+			civsendtick--;
+		if(ee_savetimer)
+			ee_savetimer--;
+		if(uart_tick)
+			uart_tick--;
+		if (lcd_timer)
+			lcd_timer--;
 		tim3_cpt++;
 		txqrg_tick++;
 		tick_1ms++;
 		got_civ_freq++;
-		if(tunertimer++ > tuningspeed)
-		{
+
+		if(tunertimer++ > tuningspeed) {
 			tunertimer = 0;
 			do_tuning = 1;
 		}
@@ -72,9 +78,10 @@ void TIM3_IRQHandler(void)
 	}
 }
 
-void delay_1ms(int ms)
+void delay_1ms(unsigned int ms)
 {
-	if(ms == 0) return;
+	if(ms == 0)
+		return;
 
 	tim3_cpt=0;
 	while(tim3_cpt < ms);

@@ -67,7 +67,8 @@ void calc_swr(int fwd, int rev)
 	 float fwd_dBm =  variation + eeconfig.ref_low_dBm;			// real measured dBm value
 	 // calculate real power in W
 	 fwd_watt = pow(10,fwd_dBm/10.0) / 1000;
-	 if(fwd_watt > 9999) fwd_watt = 9999;
+	 if(fwd_watt > 9999)
+		 fwd_watt = 9999;
 	 float Vf = sqrt(fwd_watt*50*1000);
 
 	 // calculate reverse
@@ -76,12 +77,16 @@ void calc_swr(int fwd, int rev)
 	 float rev_dBm =  variation + eeconfig.ref_low_dBm;		// real measured dBm value
 	 // calculate real power in W
 	 rev_watt = pow(10,rev_dBm/10.0) / 1000;
-	 if(rev_watt > 9999) rev_watt = 9999;
+	 if(rev_watt > 9999)
+		 rev_watt = 9999;
 	 float Vr = sqrt(rev_watt*50*1000);
 
 	 // calculate swr
-	 if(Vf == Vr || Vf < Vr) fswr = 99;
-	 else fswr = (Vf+Vr)/(Vf-Vr);
+	 if(Vf == Vr || Vf < Vr)
+		 fswr = 99;
+	 else
+		 fswr = (Vf+Vr)/(Vf-Vr);
 
-	 if(fswr<1.0001) fswr = 1.0001;
+	 if(fswr < 1.0001)
+		 fswr = 1.0001;
 }

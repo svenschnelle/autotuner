@@ -19,8 +19,7 @@ void cat_clearqrg(uint8_t *pfreq);
 void cat_setqrg_Hz(uint32_t qrg);
 void set_civ(uint8_t civ);
 void cat_set_outpower(uint8_t pwr);
-
-extern uint32_t civ_freq;
+void uart_civ_tuning_done(int status);
 extern int req_freq;
 
 #endif /* UART_CIV_H_ */

@@ -9,23 +9,19 @@
 #define TUNER_H_
 
 // Namen der Tuningprozesse
-enum _TUNINGPROCS_ {
-	NO_TUNING = 0,
+typedef enum {
+	NO_TUNING,
 	GRUNDSTELLUNG,
-								// unterer Smithbereich (normal)
-	SEEK50_PLUSPHI_LOWER_L,		// sucht 50 Ohm bei +phi durch verkleinern des Ls
+	SEEK50_PLUSPHI_LOWER_L,		// unterer Smithbereich (normal), sucht 50 Ohm bei +phi durch verkleinern des Ls
 	SEEK_PHINEG_LOWER_C,		// sucht Phi < 0 durch Verkleinern des Cs
-	SEEK_LOWEST_SWR,			// sucht das kleinste SWR durch SWR Messung
-	SEEK_ADJ_L,					// ändere L für kleinstes SWR
-
-								// oberer Smithbereich
-	SEEK_PHI_NEG_LOWER_C,
+	SEEK_LOWEST_SWR,		// sucht das kleinste SWR durch SWR Messung
+	SEEK_ADJ_L,			// ändere L für kleinstes SWR
+	SEEK_PHI_NEG_LOWER_C,		// oberer Smithbereich
 	SEEK_Z50_LOWER_C,
 	SEEK_PHIPLUS_LOWERL,
-
-	SEEK_COMPLETE, // TODO: hier entfernen
-	MAXTUNINGPROCS
-};
+	START_TUNING,
+	TUNING_DONE,
+} tuning_state_t;
 
 #define MAXPROT 180	// maximal so groß wie TXBUF - 4
 
@@ -40,7 +36,7 @@ void seek_single();
 void stop_tuning();
 void requestTuning(int nr);
 
-extern int tuningspeed;
+extern unsigned int tuningspeed;
 extern int do_tuning;
 extern int tuning_procnum;
 extern int tuningsource;

@@ -12,7 +12,7 @@
 #define FIFO_DEPTH		20
 
 void send_serial_fifo();
-void remote_tx(uint8_t type, uint8_t *pdata, int len);
+void remote_tx(uint8_t type, void *pdata, int len);
 int free_fifo_size();
 void helloFromGUI();
 

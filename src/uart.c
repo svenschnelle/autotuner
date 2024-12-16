@@ -11,7 +11,8 @@
  * Fernsteuerung via serieller Schnittstelle
  */
 
-uint8_t uart_TX_data[MAXREMOTEDATA];
+#define MAXREMOTEDATA 200	// max. Länge eines Remote Datenpakets
+static uint8_t uart_TX_data[MAXREMOTEDATA];
 
 void init_uart()
 {

@@ -10,10 +10,9 @@
 
 void set_C(int pF);
 int calc_c();
-void set_C_step(int step);
+void set_C_step(unsigned int step);
 uint8_t store_actC();
 
-extern int actC;
 extern uint8_t actCpos;
 
 #define ANZ_C_STUFEN	256

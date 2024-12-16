@@ -7,64 +7,11 @@
 
 #include "main.h"
 
-/*
- *
-Controller fordert Frequenz an:
-fe, fe, 00, e0, 03, fd
-
-wenn im TRX der "Transceive" modus aktiviert ist,
-dann sendet der TRX bei jedem Frequenzwechsel von selbst.
-
-TRX antwortet:
-fe, fe, e0, adr, 03, freq, fd
-
-Controller Adress:
-0xe0 ... Icom Default, auch vom DSP7 verwendet
-0xe1 ... dieser Tuner
-
-Codierung von freq:
-
-5 bytes:
-
-12 34 56 78 90 bedeutet:
-1.234.567.890 Hz
-
-es muss die Länge geprüft werden, da das IC735 nur
-4 bytes sendet:
-12 34 56 78 bedeutet
-12.345.678 Hz
-
-die Reihenfolge der Übertragung ist beginnend mit dem LSB,
-in obigem Beispiel ist frequ:
-90 78 56 34 12
-
- *
- */
-
 void init_USART_DMA_TX_CIV(int len);
-void handle_civrx(uint8_t data);
-uint32_t bcdToint32(uint8_t *d, int mode);
-uint8_t *byteToBCD(uint8_t v);
 
-#define MAXCIVDATA 30
-uint8_t civTXdata[MAXCIVDATA];
-uint8_t civRXdata[MAXCIVDATA];
-uint32_t civ_freq = 0;
-uint8_t rxciv_adr;
-
-/*
- * Überwache den Empfang von Frequenzmessages vom TRX:
- *
- * sollte eine Antwort für einen anderen Controller kommen 0xe0
- * so brauchen wir nicht selbst anzufragen und req_freq=0
- *
- * der Empfang von der freq wird überwacht mit got_civ_freq, welche
- * bei jedem Empfang auf 0 gesetzt wird.
- * Nach 2s (got_civ_freq==2000) wird die Eigenabfrage eingeschaltet.
- */
-int req_freq = 0;
-
-// ========== UART für das CI/V Interface ===============
+#define MAX_TX_LEN 16
+static uint8_t txbuf[MAX_TX_LEN];
+static uint32_t civ_freq = 0;
 
 // USART-1: PA9=TX, PA10=RX
 // TX: DMA-2, Stream-7, Channel-4
@@ -106,7 +53,7 @@ void init_CIV_uart()
 	}*/
 
 	// Init DMA
-	init_USART_DMA_TX_CIV(MAXCIVDATA);
+	init_USART_DMA_TX_CIV(MAX_TX_LEN);
 
 	// Init NVIC
 	// DMA (TX) Transfer Complete IRQ
@@ -147,7 +94,7 @@ void init_USART_DMA_TX_CIV(int len)
 	DMA_InitTypeDef DMA_InitStructure;
 	DMA_InitStructure.DMA_Channel = DMA_Channel_4;
 	DMA_InitStructure.DMA_PeripheralBaseAddr = (uint32_t)&USART1->DR;
-	DMA_InitStructure.DMA_Memory0BaseAddr = (uint32_t)civTXdata;
+	DMA_InitStructure.DMA_Memory0BaseAddr = (uint32_t)txbuf;
 	DMA_InitStructure.DMA_DIR = DMA_DIR_MemoryToPeripheral;
 	DMA_InitStructure.DMA_BufferSize = len;
 	DMA_InitStructure.DMA_PeripheralInc = DMA_PeripheralInc_Disable;
@@ -163,17 +110,96 @@ void init_USART_DMA_TX_CIV(int len)
 	DMA_Init(DMA2_Stream7, &DMA_InitStructure);
 }
 
+static uint32_t bcd2hex(uint8_t *data)
+{
+	return (((data[1] & 0xf) * 10) +
+		((data[1] >> 4) * 100) +
+		((data[0] & 0x0f) * 1000) +
+		((data[0] >> 4) * 10000)) * 1000;
+}
+
+// sende Datensatz via CIV
+void civ_send_intern(uint8_t *pdata, int len)
+{
+	while (DMA_GetITStatus(DMA2_Stream7, DMA_IT_TCIF7) == SET);
+		//return;	// letztes Senden noch nicht fertig
+
+	for(int i=0; i < len; i++)
+		txbuf[i] = pdata[i];
+
+	if(!DMA_GetCmdStatus(DMA2_Stream7)) {
+		init_USART_DMA_TX_CIV(len);
+		DMA_ITConfig(DMA2_Stream7, DMA_IT_TC, ENABLE);
+		DMA_Cmd(DMA2_Stream7, ENABLE);
+		USART_DMACmd(USART1, USART_DMAReq_Tx, ENABLE);
+	}
+}
+
+static void handle_yaesu_cmd(uint8_t *data)
+{
+	uint8_t response[2];
+
+	printinfo("Yaesu: %02x %02x %02x\n",
+	       data[0], data[1], data[2]);
+	switch (data[0]) {
+	case 0xf0:
+		/* Tuner enable */
+		civ_freq = bcd2hex(data+1);
+		response[0] = 0xa0;
+		response[1] = 0xa1;
+		civ_send_intern(response, 2);
+		break;
+	case 0xf1:
+		/* Tuner disable */
+		set_C_step(ANZ_C_STUFEN - 1);
+		set_L_step(ANZ_L_STUFEN - 1);
+		civ_freq = -1;
+		response[1] = 0xa1;
+		civ_send_intern(response, 2);
+		break;
+	case 0xf2:
+		/* Start autotune */
+		response[0] = 0xa0;
+		civ_freq = bcd2hex(data+1);
+		civ_send_intern(response, 1);
+		seek_single();
+		break;
+	default:
+		break;
+	}
+}
+
+void uart_civ_tuning_done(int status)
+{
+	(void)status;
+	uint8_t response = 0xa1;
+
+	civ_send_intern(&response, sizeof(response));
+}
+// wird aus dem RX irq aufgerufen
+static void handle_civrx(uint8_t data)
+{
+	static uint8_t cmd[3];
+	static int index = 0;
+
+	if (data == 0xff || index > 3) {
+		index = 0;
+		return;
+	}
+	cmd[index++] = data;
+	if (index == 3) {
+		handle_yaesu_cmd(cmd);
+	}
+}
+
 void USART1_IRQHandler(void)
 {
-	if ((USART1->SR & USART_FLAG_RXNE) != (u16)RESET)
-	{
+	if ((USART1->SR & USART_FLAG_RXNE) != (u16)RESET) {
 		handle_civrx(USART_ReceiveData(USART1) & 0xff);
-
 		USART_ClearFlag(USART1, USART_FLAG_RXNE);
 	}
 
-	if ((USART1->SR & USART_FLAG_ORE) != (u16)RESET)
-	{
+	if ((USART1->SR & USART_FLAG_ORE) != (u16)RESET) {
 		// Receiver overrun
 		// führt beim Debuggen zu ununterbrochenem Auslösen des IRQs
 		USART_ClearFlag(USART1, USART_FLAG_ORE);
@@ -182,313 +208,23 @@ void USART1_IRQHandler(void)
 
 void DMA2_Stream7_IRQHandler()
 {
-	if(DMA_GetITStatus(DMA2_Stream7,DMA_IT_TCIF7) == SET)
-	{
+	if(DMA_GetITStatus(DMA2_Stream7,DMA_IT_TCIF7) == SET) {
 		// mach irgendwas
 		DMA_ClearITPendingBit(DMA2_Stream7,DMA_IT_TCIF7);
 	}
 }
 
-// sende Datensatz via CIV
-void civ_send_intern(uint8_t *pdata, int len)
-{
-	while(DMA_GetITStatus(DMA2_Stream7,DMA_IT_TCIF7) == SET);
-		//return;	// letztes Senden noch nicht fertig
-
-	for(int i=0; i<len; i++)
-	{
-		civTXdata[i] = pdata[i];
-	}
-
-	if(!DMA_GetCmdStatus(DMA2_Stream7))
-	{
-		init_USART_DMA_TX_CIV(len);
-		DMA_ITConfig(DMA2_Stream7, DMA_IT_TC, ENABLE);
-		DMA_Cmd(DMA2_Stream7, ENABLE);
-		USART_DMACmd(USART1, USART_DMAReq_Tx, ENABLE);
-	}
-}
-
-uint64_t lastCIVsend = 0;
-
-void civ_send(uint8_t *pdata, int len)
-{
-	if((tick_1ms - lastCIVsend) < 100)
-	{
-		delay_1ms(100);
-	}
-
-	civ_send_intern(pdata,len);
-	lastCIVsend = tick_1ms;
-}
-
-void civ_request_frequency()
-{
-	if(civsendtick == 0 && req_freq == 1)
-	{
-		uint8_t cmd0_getfreq[6] = {0xfe, 0xfe, 0x00, 0xe0,    0x03, 0xfd};
-
-		// CI-V 1 ist die Default Adresse, da nicht alle TRX die 00 als Broadcast erkennen
-		cmd0_getfreq[3] = 0xE1; // Controller Address
-		cmd0_getfreq[2] = eeconfig.civ_adr;
-
-		civ_send(cmd0_getfreq, 6);
-		civsendtick = 250;	// alle 500ms
-	}
-}
-
 void cat_txrx(int txrx)
 {
-	uint8_t cmd_txrx[8] = {0xfe, 0xfe, 0x00, 0xe0,    0x1c, 0, 0, 0xfd};
-	cmd_txrx[2] = eeconfig.civ_adr;
-
-	if(txrx) cmd_txrx[6] = 1;
-
-	civ_send(cmd_txrx, 8);
+	(void)txrx;
 }
 
-void cat_set_outpower(uint8_t pwr)
+void cat_setqrg_Hz(uint32_t qrg)
 {
-	uint8_t cmd_txrx[9] = {0xfe, 0xfe, 0x00, 0xe0,    0x14, 0x0a,  0,0,   0xfd};
-	cmd_txrx[2] = eeconfig.civ_adr;
-
-	uint8_t *p = byteToBCD(pwr);
-	cmd_txrx[6] = p[0];
-	cmd_txrx[7] = p[1];
-
-	civ_send(cmd_txrx, 9);
-}
-
-void cat_mode(int mode)
-{
-	uint8_t cmd_txrx[7] = {0xfe, 0xfe, 0x00, 0xe0,    1, 1, 0xfd};
-	cmd_txrx[2] = eeconfig.civ_adr;
-
-	if(mode) cmd_txrx[5] = 5;
-
-	civ_send(cmd_txrx, 7);
-}
-
-void cat_setqrg_Hz(uint32_t freq)
-{
-uint8_t farr[5];
-
-	printinfo("~set QRG: %d kHz", freq/1000);
-
-	uint32_t _10MHz = freq / 10000000;
-	freq -= (_10MHz * 10000000);
-
-	uint32_t _1MHz = freq / 1000000;
-	freq -= (_1MHz * 1000000);
-
-	uint32_t _100kHz = freq / 100000;
-	freq -= (_100kHz * 100000);
-
-	uint32_t _10kHz = freq / 10000;
-	freq -= (_10kHz * 10000);
-
-	uint32_t _1kHz = freq / 1000;
-	freq -= (_1kHz * 1000);
-
-	uint32_t _100Hz = freq / 100;
-	freq -= (_100Hz * 100);
-
-	uint32_t _10Hz = freq / 10;
-	freq -= (_10Hz * 10);
-
-	uint32_t _1Hz = freq;
-
-	farr[0] = (uint8_t)((uint8_t)(_10Hz << 4) + (uint8_t)_1Hz);
-	farr[1] = (uint8_t)((uint8_t)(_1kHz << 4) + (uint8_t)_100Hz);
-	farr[2] = (uint8_t)((uint8_t)(_100kHz << 4) + (uint8_t)_10kHz);
-	farr[3] = (uint8_t)((uint8_t)(_10MHz << 4) + (uint8_t)_1MHz);
-	farr[4] = 0;
-
-	cat_setqrg(farr);
-}
-
-void cat_setqrg(uint8_t *p)
-{
-	uint8_t cmd_txrx[11] = {0xfe, 0xfe, 0x00, 0xe0, 5,    0,0,0,0,0,   0xfd};
-	cmd_txrx[2] = eeconfig.civ_adr;
-
-	for(int i=0; i<5; i++)
-		cmd_txrx[i+5] = p[i];
-
-	civ_send(cmd_txrx, 11);
-}
-
-void cat_clearqrg(uint8_t *pfreq)
-{
-	// umdrehen
-	uint8_t tmp = pfreq[0];
-	pfreq[0] = pfreq[4];
-	pfreq[4] = tmp;
-
-	tmp = pfreq[1];
-	pfreq[1] = pfreq[3];
-	pfreq[3] = tmp;
-
-	int ifreq = bcdToint32(pfreq,5);
-	clearTuningValue(ifreq);
-}
-
-// wird aus dem RX irq aufgerufen
-void handle_civrx(uint8_t data)
-{
-	// mache vorne Platz
-	for(int i=(MAXCIVDATA-1); i>0; i--)
-		civRXdata[i] = civRXdata[i-1];
-
-	// neues Byte
-	civRXdata[0] = data;
-
-	// der Datensatz steht verkehrt herum in civRXdata
-	if(civRXdata[0] == 0xfd)
-	{
-		// Ende erkannt
-		// wenn die Antwort einem DSP-7 gilt (Controller Adr: 0xe0),
-		// dann müssen wir nicht selbst anfragen
-		if(civRXdata[8] == 0xe0 && civRXdata[9] == 0xfe && civRXdata[10] == 0xfe)
-		{
-			// 5 byte Datensatz
-			rxciv_adr = civRXdata[7];
-			civ_freq = bcdToint32(civRXdata+1,5);
-			req_freq = 0;
-			got_civ_freq = 0;
-		}
-		if(civRXdata[7] == 0xe0 && civRXdata[8] == 0xfe && civRXdata[9] == 0xfe)
-		{
-			// 4 byte Datensatz
-			rxciv_adr = civRXdata[6];
-			civ_freq = bcdToint32(civRXdata+1,4);
-			req_freq = 0;
-			got_civ_freq = 0;
-		}
-
-		// Antwort auf eine eigene Anfrage (Controller Adr: 0xe1)
-		if(civRXdata[8] == 0xe1 && civRXdata[9] == 0xfe && civRXdata[10] == 0xfe)
-		{
-			// 5 byte Datensatz
-			rxciv_adr = civRXdata[7];
-			civ_freq = bcdToint32(civRXdata+1,5);
-			got_civ_freq = 0;
-		}
-		if(civRXdata[7] == 0xe1 && civRXdata[8] == 0xfe && civRXdata[9] == 0xfe)
-		{
-			// 4 byte Datensatz
-			rxciv_adr = civRXdata[6];
-			civ_freq = bcdToint32(civRXdata+1,4);
-			got_civ_freq = 0;
-		}
-	}
-}
-
-uint32_t bcdconv(uint8_t v, uint32_t mult)
-{
-uint32_t tmp,f;
-
-	tmp = (v >> 4) & 0x0f;
-	f = tmp * mult * 10;
-	tmp = v & 0x0f;
-	f += tmp * mult;
-
-	return f;
-}
-
-// Wandle ICOM Frequenzangabe um
-uint32_t bcdToint32(uint8_t *d, int mode)
-{
-uint32_t f=0;
-
-	if(mode == 5)
-	{
-		f += bcdconv(d[0],100000000);
-		f += bcdconv(d[1],1000000);
-		f += bcdconv(d[2],10000);
-		f += bcdconv(d[3],100);
-		f += bcdconv(d[4],1);
-	}
-
-	if(mode == 4)
-	{
-		f += bcdconv(d[0],1000000);
-		f += bcdconv(d[1],10000);
-		f += bcdconv(d[2],100);
-		f += bcdconv(d[3],1);
-	}
-	return f;
-}
-
-void makeBCD(uint32_t freq, uint8_t *farr)
-{
-	uint32_t _10MHz = freq / 10000000;
-	freq -= (_10MHz * 10000000);
-
-	uint32_t _1MHz = freq / 1000000;
-	freq -= (_1MHz * 1000000);
-
-	uint32_t _100kHz = freq / 100000;
-	freq -= (_100kHz * 100000);
-
-	uint32_t _10kHz = freq / 10000;
-	freq -= (_10kHz * 10000);
-
-	uint32_t _1kHz = freq / 1000;
-	freq -= (_1kHz * 1000);
-
-	uint32_t _100Hz = freq / 100;
-	freq -= (_100Hz * 100);
-
-	uint32_t _10Hz = freq / 10;
-	freq -= (_10Hz * 10);
-
-	uint32_t _1Hz = freq;
-
-	farr[0] = (_10Hz << 4) + _1Hz;
-	farr[1] = (_1kHz << 4) + _100Hz;
-	farr[2] = (_100kHz << 4) + _10kHz;
-	farr[3] = (_10MHz << 4) + _1MHz;
-	farr[4] = 0;
-}
-
-uint8_t bcdbyte[2];
-uint8_t *byteToBCD(uint8_t v)
-{
-	uint8_t s1 = v/100;
-	v -= (s1*100);
-
-	uint8_t s2 = v/10;
-	v -= (s2*10);
-
-	uint8_t s3 = v;
-
-	bcdbyte[0] = s1;
-	bcdbyte[1] = (s2 << 4) | s3;
-
-	return bcdbyte;
+	(void)qrg;
 }
 
 uint32_t getCIVfreq()
 {
-uint32_t freq;
-
-	USART_ITConfig(USART1, USART_IT_RXNE, DISABLE);
-	freq = civ_freq;
-	USART_ITConfig(USART1, USART_IT_RXNE, ENABLE);
-
-	// wenn 2s lang keine Antwort kam, schalte die Abfrage ein
-	if(got_civ_freq > 2000)
-		req_freq = 1;
-
-	// wenn 5s lang Antwort kam, so ignoriere CIV Werte
-	if(got_civ_freq > 5000)
-		civ_freq = 0;
-
-	return freq; // in Hz
-}
-
-void set_civ(uint8_t civ)
-{
-	eeconfig.civ_adr = civ;
+	return civ_freq;
 }

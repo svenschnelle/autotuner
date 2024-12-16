@@ -26,9 +26,7 @@ int put_ser_tx_fifo(uint8_t *pdata, int len)
 
 	// ist im Fifo noch Platz ?
 	if(((wridx+1) % FIFO_DEPTH) == rdidx)
-	{
 		return 0;
-	}
 
 	// Pointer auf den neuen Eintrag
 	uint8_t *p = txfifo[wridx];
@@ -38,10 +36,11 @@ int put_ser_tx_fifo(uint8_t *pdata, int len)
 	*(p+1) = (len >> 8) & 0xff;
 
 	// schreibe Daten
-	memcpy(p+2, pdata, len);
+	memcpy(p + 2, pdata, len);
 
 	// stelle Schreibzeiger weiter
-	if(++wridx == FIFO_DEPTH) wridx = 0;
+	if(++wridx == FIFO_DEPTH)
+		wridx = 0;
 
 	return 1;
 }
@@ -49,7 +48,7 @@ int put_ser_tx_fifo(uint8_t *pdata, int len)
 // soviele Elemente passen in den Fifo
 int free_fifo_size()
 {
-int res;
+	int res;
 
 	res = (FIFO_DEPTH - 1 + rdidx - wridx) % FIFO_DEPTH;
 
@@ -69,11 +68,11 @@ uint16_t lastcrcPerType[MAXTYPES];
 
 void helloFromGUI()
 {
-	for(int i=0; i<MAXTYPES; i++)
+	for(int i=0; i < MAXTYPES; i++)
 		lastcrcPerType[i] = 0;
 }
 
-void remote_tx(uint8_t type, uint8_t *pdata, int len)
+void remote_tx(uint8_t type, void *pdata, int len)
 {
 	// prüfe die Länge, es kommen noch
 	// 4x Header, 2xLänge, 2x CRC dazu
@@ -121,7 +120,8 @@ int get_ser_tx_fifo(uint8_t *pdata)
 		memcpy(pdata, p+2, len);
 
 	// stelle Lesezeiger weiter
-	if(++rdidx == FIFO_DEPTH) rdidx = 0;
+	if(++rdidx == FIFO_DEPTH)
+		rdidx = 0;
 
 	return len;
 }
@@ -133,14 +133,10 @@ void send_serial_fifo()
 uint8_t txdata[FIFO_DATALEN];
 
 	if(remote_tx_ready() == 0)
-	{
 		return;
-	}
 
 	int len = get_ser_tx_fifo(txdata);
 	if(len)
-	{
 		remote_send(txdata, len);  // Sende seriell aus
-	}
 }
 

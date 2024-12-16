@@ -36,7 +36,16 @@ enum {
 	RELAISANZAHL
 };
 
-extern uint8_t relpos[RELAISANZAHL];
+struct relay {
+	GPIO_TypeDef *gpio;
+	int on;
+	int off;
+	int state;
+	int timer_on;
+	int timer_off;
+};
+
+extern struct relay relays[RELAISANZAHL];
 
 #define RELHOLDTIME 15 //20	// ms (mindestens 15 geht noch)
 

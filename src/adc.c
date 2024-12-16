@@ -23,8 +23,8 @@
  * Phi-Eingang ist digital: PC15
  */
 
-#define ADCMITTELANZ	1
-#define ADCCHANNELS		6
+#define ADCMITTELANZ	16
+#define ADCCHANNELS	6
 
 enum ADCCHANNEL {
 	UANT=0,
@@ -35,16 +35,25 @@ enum ADCCHANNEL {
 	TEMPERATURE
 };
 
-volatile uint16_t ADC1ConvertedValue[ADCMITTELANZ * ADCCHANNELS];
-unsigned char st = ADC_SampleTime_480Cycles;
+static volatile uint16_t ADC1ConvertedValue[ADCMITTELANZ * ADCCHANNELS];
+static const unsigned char st = ADC_SampleTime_480Cycles;
+
+int revvoltage, fwdvoltage;
+int realZ;
+int z;		// Z  : 0= kleiner 50, 100=größer 50, 50=ungefähr 50 (in einem Fenster von..bis)
+int phi;	// phi: -1 oder +1
+int meas_u, meas_i;
+int ant_U,ant_I;	// 10x Antennen U und I
+int itemp;
+int meas_UB;
 
 // Initialisiere ADC1
 void t2_ADC_Init()
 {
-ADC_InitTypeDef       ADC_InitStructure;
-ADC_CommonInitTypeDef ADC_CommonInitStructure;
-DMA_InitTypeDef       DMA_InitStructure;
-GPIO_InitTypeDef      GPIO_InitStructure;
+	ADC_InitTypeDef       ADC_InitStructure;
+	ADC_CommonInitTypeDef ADC_CommonInitStructure;
+	DMA_InitTypeDef       DMA_InitStructure;
+	GPIO_InitTypeDef      GPIO_InitStructure;
 
 	// Enable ADC1, DMA2 and GPIO clocks
 	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_DMA2 | RCC_AHB1Periph_GPIOA | RCC_AHB1Periph_GPIOB, ENABLE);
@@ -133,7 +142,7 @@ GPIO_InitTypeDef      GPIO_InitStructure;
 }
 
 // prüfen ob eine Messung fertig ist
-volatile int adccnv_ready = 0;
+static volatile int adccnv_ready = 0;
 
 void DMA2_Stream4_IRQHandler()
 {
@@ -144,44 +153,33 @@ void DMA2_Stream4_IRQHandler()
 	}
 }
 
-int isAdcConvReady()
+static int isAdcConvReady(void)
 {
-	if(adccnv_ready == 1)
-	{
+	if(adccnv_ready == 1) {
 		adccnv_ready = 0;
 		return 1;
 	}
-
 	return 0;
 }
 
 // es werden per DMA genau ADCMITTELANZ Messungen pro ADC gemacht
 // und im Array ADC1ConvertedValue abgelegt
 // dann wird hier aus diesen Messungen der Mittelwert gebildet
-int ui16_Read_ADC1_ConvertedValue(int channel)
+static int ui16_Read_ADC1_ConvertedValue(int channel)
 {
-unsigned long v=0;
+	unsigned long v = 0;
 
-	for(unsigned long i=0; i<ADCMITTELANZ; i++)
-		v += ADC1ConvertedValue[i * ADCCHANNELS +channel];
+	for(unsigned long i = 0; i < ADCMITTELANZ; i++)
+		v += ADC1ConvertedValue[i * ADCCHANNELS + channel];
 
 	v /= ADCMITTELANZ;
 
 	return (int)((v*2500)/4096);      // Read and return conversion result
 }
 
-int revvoltage, fwdvoltage;
-int realZ;
-int z;		// Z  : 0= kleiner 50, 100=größer 50, 50=ungefähr 50 (in einem Fenster von..bis)
-int phi;	// phi: -1 oder +1
-int meas_u, meas_i;
-int ant_U,ant_I;	// 10x Antennen U und I
-int itemp;
-int meas_UB;
-
-int scan_analog_inputs()
+int scan_analog_inputs(void)
 {
-	if(isAdcConvReady() == 0) return 0;
+	while(isAdcConvReady() == 0);
 
 	calc_swr(fwdvoltage = ui16_Read_ADC1_ConvertedValue(UFWDANT),revvoltage = ui16_Read_ADC1_ConvertedValue(UREVANT));
 
@@ -199,8 +197,7 @@ int scan_analog_inputs()
 	// refI3W in mV = gemessener Strom bei 3 Watt, das sind 0,225A
 	// refI100W in mV = gemessener Strom bei 100 Watt, das sind 1,41A
 	// antU x 10 und antI x 100
-	if(meas_u < 5)
-	{
+	if(meas_u < 5) {
 		meas_u = 0;
 		meas_i = 0;
 		fswr = 0;
@@ -210,8 +207,10 @@ int scan_analog_inputs()
 	float fi = (1.41-0.225)*(meas_i-eeconfig.refI3W)/(eeconfig.refI100W-eeconfig.refI3W) + 0.225;
 
 	// bei RX Nullstellen
-	if(fu < 0) fu = 0;
-	if(fi < 0) fi = 0;
+	if(fu < 0)
+		fu = 0;
+	if(fi < 0)
+		fi = 0;
 
 	ant_U = (int)(fu * 10);
 	ant_I = (int)(fi * 100);
@@ -223,14 +222,20 @@ int scan_analog_inputs()
 	else
 		realZ = 255;
 
-	if(realZ > 255) realZ = 255;
-	if(realZ < 40) z=0;
-	else if (realZ > 60) z=100;
-	else z=50;
-
+#if 0
+	z = realZ;
+#else
+	if(realZ > 255)
+		realZ = 255;
+	if(realZ < 40)
+		z=0;
+	else if (realZ > 60)
+		z=100;
+	else
+		z=50;
+#endif
 	// frage noch PHI ab
-	int v = GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_15);
-	if(v != 0)
+	if (GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_15))
 		phi = -1;
 	else
 		phi = 1;

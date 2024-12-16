@@ -92,13 +92,11 @@ uint8_t mem_avail[BANDEDGENUM];
 
 uint8_t *get_MemUsage()
 {
-	for(int band = 0; band < BANDEDGENUM; band++)
-	{
+	for(int band = 0; band < BANDEDGENUM; band++) {
 		int qrgs = 0;
 		int mems = 0;
 
-		for(int qrg = startedges[band]; qrg <= stopedges[band]; qrg += 10000)
-		{
+		for(uint32_t qrg = startedges[band]; qrg <= stopedges[band]; qrg += 10000) {
 			qrgs++;
 
 			// gibt es einen Wert an der aktuellen Position ?
